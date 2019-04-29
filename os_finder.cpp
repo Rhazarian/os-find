@@ -20,6 +20,33 @@ namespace
 		unsigned char d_type;
 		char d_name[];
 	};
+
+	struct fd_guard
+	{
+		fd_guard(const char* pathname, const int flags)
+		{
+			fd_ = open(pathname, flags);
+		}
+
+		~fd_guard()
+		{
+			if (fd_ != -1)
+			{
+				close(fd_);
+			}
+		}
+
+		int get_fd() const
+		{
+			return fd_;
+		}
+
+		fd_guard(const fd_guard& other) = delete;
+		fd_guard& operator=(const fd_guard& other) = delete;
+
+	private:
+		int fd_;
+	};
 }
 
 os_finder::size_filter::size_filter(size_t val, cmp cmp_mode) : val_(val), cmp_mode_(cmp_mode) { }
@@ -62,9 +89,9 @@ namespace fs = std::filesystem;
 
 void os_finder::visit_rec(std::vector<fs::path>& found, const fs::path& path)
 {
-	int fd = open(path.c_str(), O_RDONLY | O_DIRECTORY);
+	const auto fd = fd_guard(path.c_str(), O_RDONLY | O_DIRECTORY);
 	std::array<char, 4096> buf;
-	for (auto nread = syscall(SYS_getdents64, fd, buf.data(), buf.size()); nread != 0; nread = syscall(SYS_getdents64, fd, buf.data(), buf.size())) {
+	for (auto nread = syscall(SYS_getdents64, fd.get_fd(), buf.data(), buf.size()); nread != 0; nread = syscall(SYS_getdents64, fd.get_fd(), buf.data(), buf.size())) {
 		if (nread == -1)
 		{
 			throw finder_exception(std::string("could not read dir: ") + std::strerror(errno));
@@ -90,7 +117,7 @@ void os_finder::visit_rec(std::vector<fs::path>& found, const fs::path& path)
 				}
 				if (!sizes_.empty() || !nlinks_.empty()) {
 					struct stat stats{};
-					if (fstat(fd, &stats) == -1) {
+					if (fstat(fd.get_fd(), &stats) == -1) {
 						throw finder_exception(std::string("could not stat file: ") + std::strerror(errno));
 					}
 					if (!std::all_of(sizes_.begin(), sizes_.end(), [sz = stats.st_size](const auto& filter)
@@ -109,7 +136,7 @@ void os_finder::visit_rec(std::vector<fs::path>& found, const fs::path& path)
 				found.push_back(std::move(cur));
 			}
 			else if (entry->d_type == DT_DIR) {
-				visit_rec(results, cur);
+				visit_rec(found, cur);
 			}
 		}
 	}
