@@ -10,6 +10,7 @@
 #include <boost/program_options.hpp>
 
 #include <unistd.h>
+#include <sys/wait.h>
 
 #include "os_finder.h"
 
@@ -119,18 +120,49 @@ int main(int argc, char* argv[])
 
 	if (vm.count("exec"))
 	{
+		std::vector<char*> found_c_strs;
+		found_c_strs.reserve(found.size() + 2);
+		found_c_strs.push_back(nullptr);
+		for (auto const& path : found) {
+			found_c_strs.push_back(const_cast<char*>(path.c_str()));
+		}
+		found_c_strs.push_back(nullptr);
+
 		for (const auto& exec : vm["exec"].as<std::vector<std::filesystem::path>>())
 		{
-			std::vector<char*> found_c_strs;
-			found_c_strs.reserve(found.size() + 2);
-			found_c_strs.push_back(const_cast<char*>(exec.c_str()));
-			for (auto const& path : found) {
-				found_c_strs.push_back(const_cast<char*>(path.c_str()));
+			found_c_strs[0] = const_cast<char*>(exec.c_str());
+			const auto pid = fork();
+			if (pid == -1)
+			{
+				std::cout << "could not create a child process: " << std::strerror(errno) << std::endl;
+				continue;
 			}
-			found_c_strs.push_back(nullptr);
-
-			if (execv(found_c_strs[0], found_c_strs.data()) == -1) {
-				std::cout << "could not execute " << exec << ": " << std::strerror(errno) << std::endl;
+			if (pid == 0)
+			{
+				[[maybe_unused]] const auto exec_res = execvp(found_c_strs[0], found_c_strs.data());
+				assert(exec_res == -1);
+				std::cout << "could not execute " << exec << ": " <<  std::strerror(errno) << std::endl;
+			}
+			int status;
+			if (waitpid(pid, &status, 0) == -1)
+			{
+				std::cout << "waiting for the child process has failed: " << std::strerror(errno) << std::endl;
+				continue;
+			}
+			if (WIFEXITED(status))
+			{
+				std::cout << "the child process has finished with status code " << WEXITSTATUS(status) << std::endl;
+			}
+			else if (WIFSIGNALED(status))
+			{
+				std::cout << "the child process was killed by signal " << WTERMSIG(status) << std::endl;
+			}
+			else if (WIFSTOPPED(status))
+			{
+				std::cout << "the child process was stopped by signal " << WSTOPSIG(status) << std::endl;
+			}
+			else
+			{
 				return EXIT_FAILURE;
 			}
 		}
