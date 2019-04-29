@@ -90,6 +90,10 @@ namespace fs = std::filesystem;
 void os_finder::visit_rec(std::vector<fs::path>& found, const fs::path& path)
 {
 	const auto fd = fd_guard(path.c_str(), O_RDONLY | O_DIRECTORY);
+	if (fd.get_fd() == -1)
+	{
+		throw finder_exception(std::string("could not open dir: ") + std::strerror(errno));
+	}
 	std::array<char, 4096> buf;
 	for (auto nread = syscall(SYS_getdents64, fd.get_fd(), buf.data(), buf.size()); nread != 0; nread = syscall(SYS_getdents64, fd.get_fd(), buf.data(), buf.size())) {
 		if (nread == -1)
