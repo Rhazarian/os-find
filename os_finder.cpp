@@ -87,68 +87,76 @@ void os_finder::filter_nlinks(nlink_t nlinks)
 
 namespace fs = std::filesystem;
 
-void os_finder::visit_rec(std::vector<fs::path>& found, const fs::path& path)
+bool os_finder::visit_rec(std::vector<fs::path>& found, const fs::path& path, const callback_t& on_visit_file_failed)
 {
-	const auto fd = fd_guard(path.c_str(), O_RDONLY | O_DIRECTORY);
-	if (fd.get_fd() == -1)
-	{
-		throw finder_exception(std::string("could not open dir: ") + std::strerror(errno));
-	}
-	std::array<char, 4096> buf;
-	for (auto nread = syscall(SYS_getdents64, fd.get_fd(), buf.data(), buf.size()); nread != 0; nread = syscall(SYS_getdents64, fd.get_fd(), buf.data(), buf.size())) {
-		if (nread == -1)
+	try {
+		const auto fd = fd_guard(path.c_str(), O_RDONLY | O_DIRECTORY);
+		if (fd.get_fd() == -1)
 		{
-			throw finder_exception(std::string("could not read dir: ") + std::strerror(errno));
+			throw finder_exception(std::string("Could not open dir: ") + std::strerror(errno));
 		}
-
-		for (auto ptr = buf.data(); ptr < buf.data() + nread; ptr += reinterpret_cast<linux_dirent64*>(ptr)->d_reclen) {
-			const auto entry = reinterpret_cast<linux_dirent64*>(ptr);
-			const auto name = std::string(entry->d_name);
-			if (name == "." || name == "..") {
-				continue;
+		std::array<char, 4096> buf;
+		for (auto nread = syscall(SYS_getdents64, fd.get_fd(), buf.data(), buf.size()); nread != 0; nread = syscall(SYS_getdents64, fd.get_fd(), buf.data(), buf.size())) {
+			if (nread == -1)
+			{
+				throw finder_exception(std::string("Could not read dir: ") + std::strerror(errno));
 			}
-			auto cur = path / name;
 
-			if (entry->d_type == DT_REG) {
-
-				if (!inums_.empty() && inums_.find(entry->d_ino) == inums_.end())
-				{
+			for (auto ptr = buf.data(); ptr < buf.data() + nread; ptr += reinterpret_cast<linux_dirent64*>(ptr)->d_reclen) {
+				const auto entry = reinterpret_cast<linux_dirent64*>(ptr);
+				const auto name = std::string(entry->d_name);
+				if (name == "." || name == "..") {
 					continue;
 				}
-				if (!names_.empty() && names_.find(name) == names_.end())
-				{
-					continue;
-				}
-				if (!sizes_.empty() || !nlinks_.empty()) {
-					struct stat stats{};
-					if (fstat(fd.get_fd(), &stats) == -1) {
-						throw finder_exception(std::string("could not stat file: ") + std::strerror(errno));
-					}
-					if (!std::all_of(sizes_.begin(), sizes_.end(), [sz = stats.st_size](const auto& filter)
-					{
-						return filter.check(sz);
-					}))
-					{
-						continue;
-					};
-					if (!nlinks_.empty() && nlinks_.find(stats.st_nlink) == nlinks_.end())
+				auto cur = path / name;
+
+				if (entry->d_type == DT_REG) {
+					if (!inums_.empty() && inums_.find(entry->d_ino) == inums_.end())
 					{
 						continue;
 					}
-				}
+					if (!names_.empty() && names_.find(name) == names_.end())
+					{
+						continue;
+					}
+					if (!sizes_.empty() || !nlinks_.empty()) {
+						struct stat stats {};
+						if (fstat(fd.get_fd(), &stats) == -1) {
+							throw finder_exception(std::string("Could not stat file: ") + std::strerror(errno));
+						}
+						if (!std::all_of(sizes_.begin(), sizes_.end(), [sz = stats.st_size](const auto& filter)
+						{
+							return filter.check(sz);
+						}))
+						{
+							continue;
+						};
+						if (!nlinks_.empty() && nlinks_.find(stats.st_nlink) == nlinks_.end())
+						{
+							continue;
+						}
+					}
 
-				found.push_back(std::move(cur));
-			}
-			else if (entry->d_type == DT_DIR) {
-				visit_rec(found, cur);
+					found.push_back(std::move(cur));
+				}
+				else if (entry->d_type == DT_DIR) {
+					if (!visit_rec(found, cur, on_visit_file_failed))
+					{
+						return false;
+					}
+				}
 			}
 		}
+	} catch (const std::exception& ex)
+	{
+		return on_visit_file_failed(path, ex);
 	}
+	return true;
 }
 
-std::vector<fs::path> os_finder::visit(const fs::path& path)
+std::vector<fs::path> os_finder::visit(const fs::path& path, const callback_t& on_visit_file_failed)
 {
 	std::vector<fs::path> found;
-	visit_rec(found, path);
+	visit_rec(found, path, on_visit_file_failed);
 	return found;
 }

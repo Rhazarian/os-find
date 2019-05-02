@@ -111,7 +111,11 @@ int main(int argc, char* argv[])
 	std::vector<std::filesystem::path> found;
 	try
 	{
-		found = finder.visit(vm["path"].as<std::filesystem::path>());
+		found = finder.visit(vm["path"].as<std::filesystem::path>(), [](const auto& path, const auto& ex)
+		{
+			std::cerr << "Skipped " << path << ": " << ex.what() << std::endl;
+			return true;
+		});
 	} catch (const os_finder::finder_exception& ex)
 	{
 		std::cout << ex.what() << std::endl;
@@ -134,32 +138,32 @@ int main(int argc, char* argv[])
 			const auto pid = fork();
 			if (pid == -1)
 			{
-				std::cout << "could not create a child process: " << std::strerror(errno) << std::endl;
+				std::cerr << "Could not create a child process: " << std::strerror(errno) << std::endl;
 				continue;
 			}
 			if (pid == 0)
 			{
 				[[maybe_unused]] const auto exec_res = execvp(found_c_strs[0], found_c_strs.data());
 				assert(exec_res == -1);
-				std::cout << "could not execute " << exec << ": " <<  std::strerror(errno) << std::endl;
+				std::cerr << "Could not execute " << exec << ": " <<  std::strerror(errno) << std::endl;
 			}
 			int status;
 			if (waitpid(pid, &status, 0) == -1)
 			{
-				std::cout << "waiting for the child process has failed: " << std::strerror(errno) << std::endl;
+				std::cerr << "Waiting for the child process has failed: " << std::strerror(errno) << std::endl;
 				continue;
 			}
 			if (WIFEXITED(status))
 			{
-				std::cout << "the child process has finished with status code " << WEXITSTATUS(status) << std::endl;
+				std::cerr << "The child process has finished with status code " << WEXITSTATUS(status) << std::endl;
 			}
 			else if (WIFSIGNALED(status))
 			{
-				std::cout << "the child process was killed by signal " << WTERMSIG(status) << std::endl;
+				std::cerr << "The child process was killed by signal " << WTERMSIG(status) << std::endl;
 			}
 			else if (WIFSTOPPED(status))
 			{
-				std::cout << "the child process was stopped by signal " << WSTOPSIG(status) << std::endl;
+				std::cerr << "The child process was stopped by signal " << WSTOPSIG(status) << std::endl;
 			}
 			else
 			{
