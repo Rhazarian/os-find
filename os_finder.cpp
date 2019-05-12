@@ -1,15 +1,10 @@
 #include "os_finder.h"
 
-#include <array>
-#include <algorithm>
-
 #include <sys/syscall.h>
 #include <sys/stat.h>
 #include <dirent.h>
 #include <fcntl.h>
 #include <unistd.h>
-
-#include <iostream>
 
 namespace
 {
@@ -120,8 +115,8 @@ bool os_finder::visit_rec(std::vector<fs::path>& found, const fs::path& path, co
 						continue;
 					}
 					if (!sizes_.empty() || !nlinks_.empty()) {
-						struct stat stats {};
-						if (fstat(fd.get_fd(), &stats) == -1) {
+						struct stat stats{};
+						if (fstatat(fd.get_fd(), name.c_str(), &stats, 0) == -1) {
 							throw finder_exception(std::string("Could not stat file: ") + std::strerror(errno));
 						}
 						if (!std::all_of(sizes_.begin(), sizes_.end(), [sz = stats.st_size](const auto& filter)
@@ -130,7 +125,7 @@ bool os_finder::visit_rec(std::vector<fs::path>& found, const fs::path& path, co
 						}))
 						{
 							continue;
-						};
+						}
 						if (!nlinks_.empty() && nlinks_.find(stats.st_nlink) == nlinks_.end())
 						{
 							continue;
